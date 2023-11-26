@@ -17,6 +17,11 @@
 int main(int argc, char *argv[]) {
   unsigned int state_access_delay_ms = STATE_ACCESS_DELAY_MS;
 
+  if(argc == 1) {
+    fprintf(stderr, "Invalid number of arguments\n");
+    return 1;
+  }
+
   if (argc > 2) {
     char *endptr;
     unsigned long int delay = strtoul(argv[2], &endptr, 10);
