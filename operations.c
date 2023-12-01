@@ -2,11 +2,40 @@
 #include <stdlib.h>
 #include <time.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "eventlist.h"
 
+#define MAX_UINT 4294967295
+
 static struct EventList *event_list = NULL;
 static unsigned int state_access_delay_ms = 0;
+
+/* Auxiliary functions */
+void write_to_out(int out_fd, char *buffer) {
+  ssize_t numWritten = 0;
+  size_t done = 0, len = strlen(buffer);
+
+  while ((numWritten = write(out_fd, buffer+done, len)) > 0) {
+    done += (size_t)numWritten;
+    len = len - (size_t)numWritten;
+  }
+  if (numWritten == -1) {
+      fprintf(stderr, "Failed to write to .out file\n");
+      exit(1);
+  }
+}
+
+char* realloc_and_copy(char *buffer, size_t size, const char *str) {
+  buffer = (char*) realloc(buffer, size);
+  if (buffer == NULL) {
+    fprintf(stderr, "Error allocating memory for buffer\n");
+    exit(1);
+  }
+
+  strcpy(buffer, str);
+  return buffer;
+}
 
 /// Calculates a timespec from a delay in milliseconds.
 /// @param delay_ms Delay in milliseconds.
@@ -162,7 +191,7 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t *xs,
   return 0;
 }
 
-int ems_show(unsigned int event_id, char *buffer) {
+int ems_show(unsigned int event_id, int out_fd) {
   if (event_list == NULL) {
     fprintf(stderr, "EMS state must be initialized\n");
     return 1;
@@ -175,43 +204,56 @@ int ems_show(unsigned int event_id, char *buffer) {
     return 1;
   }
 
+  char *buffer = (char*) malloc(1);
   for (size_t i = 1; i <= event->rows; i++) {
     for (size_t j = 1; j <= event->cols; j++) {
       unsigned int *seat = get_seat_with_delay(event, seat_index(event, i, j));
-      char seat_as_char[3];               // TODO: perguntar ao professor
-      sprintf(seat_as_char, "%u", *seat); // converts the unsigned int to a string
-      strcat(buffer, seat_as_char);
+
+      char seat_as_char[sizeof(MAX_UINT) + 1];  // max size of uint + \0
+      sprintf(seat_as_char, "%u", *seat);
+      buffer = realloc_and_copy(buffer, strlen(seat_as_char) + 1, seat_as_char);
+      write_to_out(out_fd, buffer);
 
       if (j < event->cols) {
-        strcat(buffer, " ");
+        buffer = realloc_and_copy(buffer, sizeof(" "), " ");
+        write_to_out(out_fd, buffer);
       }
     }
 
-    strcat(buffer, "\n");
+    buffer = realloc_and_copy(buffer, sizeof("\n"), "\n");
+    write_to_out(out_fd, buffer);
   }
+
+  free(buffer);
 
   return 0;
 }
 
-int ems_list_events(char *buffer) {
+int ems_list_events(int out_fd) {
   if (event_list == NULL) {
     fprintf(stderr, "EMS state must be initialized\n");
     return 1;
   }
 
+  char *buffer = (char*) malloc(1);
   if (event_list->head == NULL) {
-    strcat(buffer, "No events\n");
+    buffer = realloc_and_copy(buffer, sizeof("No events\n"), "No events\n");
+    write_to_out(out_fd, buffer);
     return 0;
   }
 
   struct ListNode *current = event_list->head;
   while (current != NULL) {
-    strcat(buffer, "Event: ");
-    char event_id_as_char[3];
-    sprintf(event_id_as_char, "%u\n", current->event->id);  // TODO: perguntar ao professor
-    strcat(buffer, event_id_as_char);
+    buffer = realloc_and_copy(buffer, sizeof("Event: "), "Event: ");
+    write_to_out(out_fd, buffer);
+    char event_id_as_char[sizeof(MAX_UINT) + 2];  // max size of uint + \n + \0
+    sprintf(event_id_as_char, "%u\n", current->event->id);
+    buffer = realloc_and_copy(buffer, strlen(event_id_as_char) + 1, event_id_as_char);
+    write_to_out(out_fd, buffer);
     current = current->next;
   }
+
+  free(buffer);
 
   return 0;
 }
