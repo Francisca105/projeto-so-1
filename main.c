@@ -18,14 +18,14 @@
 int main(int argc, char *argv[]) {
   unsigned int state_access_delay_ms = STATE_ACCESS_DELAY_MS;
 
-  if (argc < 3) {
-    fprintf(stderr, "Usage: %s <dir_path> <MAX_PROC> [delay]\n", argv[0]);
+  if (argc < 4) {
+    fprintf(stderr, "Usage: %s <dir_path> <MAX_PROC> <MAX_THREADS> [delay]\n", argv[0]);
     return 1;
   }
 
-  if (argc > 3) {
+  if (argc > 4) {
     char *endptr;
-    unsigned long int delay = strtoul(argv[3], &endptr, 10);
+    unsigned long int delay = strtoul(argv[4], &endptr, 10);
 
     if (*endptr != '\0' || delay > UINT_MAX) {
       fprintf(stderr, "Invalid delay value or value too large\n");
@@ -52,6 +52,8 @@ int main(int argc, char *argv[]) {
   errno = 0;
 
   int MAX_PROC = atoi(argv[2]);
+  int MAX_THREADS = atoi(argv[3]);
+  
   int num_active_proc = 0;
 
   while((dp = readdir(dir)) != NULL) {
