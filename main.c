@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <pthread.h>
 
 #include "constants.h"
 #include "operations.h"
@@ -15,17 +16,23 @@
 #define BUFFER_SIZE 1024
 #define DT_REG 8
 
+typedef struct thread_struct {
+  pthread_t thread;
+  int thread_id;
+  struct thread_struct *next;
+} thread_struct;
+
 int main(int argc, char *argv[]) {
   unsigned int state_access_delay_ms = STATE_ACCESS_DELAY_MS;
 
-  if (argc < 4) {
-    fprintf(stderr, "Usage: %s <dir_path> <MAX_PROC> <MAX_THREADS> [delay]\n", argv[0]);
+  if (argc < 3) {
+    fprintf(stderr, "Usage: %s <dir_path> <MAX_PROC> [delay]\n", argv[0]);
     return 1;
   }
 
-  if (argc > 4) {
+  if (argc > 3) {
     char *endptr;
-    unsigned long int delay = strtoul(argv[4], &endptr, 10);
+    unsigned long int delay = strtoul(argv[3], &endptr, 10);
 
     if (*endptr != '\0' || delay > UINT_MAX) {
       fprintf(stderr, "Invalid delay value or value too large\n");
@@ -52,8 +59,6 @@ int main(int argc, char *argv[]) {
   errno = 0;
 
   int MAX_PROC = atoi(argv[2]);
-  int MAX_THREADS = atoi(argv[3]);
-  
   int num_active_proc = 0;
 
   while((dp = readdir(dir)) != NULL) {
@@ -81,8 +86,23 @@ int main(int argc, char *argv[]) {
 
       num_active_proc++;
 
-      if (pid == 0) {
+      if (pid == 0) { // Child process
         size_t len_path = strlen(argv[1]) + strlen(dp->d_name) + 2; // +2 for '/' and '\0'
+        // thread_struct *head = NULL;
+
+        // void add_thread(thread_struct *new) {
+        //   if (head == NULL) {
+        //     head = new;
+        //   } else {
+        //     thread_struct *curr = head;
+
+        //     while (curr->next != NULL) {
+        //       curr = curr->next;
+        //     }
+
+        //     curr->next = new;
+        //   }
+        // }
 
         char *jobs_file_path = (char*) malloc(len_path);
         if (jobs_file_path == NULL) {
@@ -118,123 +138,147 @@ int main(int argc, char *argv[]) {
           return 1;
         }
 
+        // int id = 0;
         while (1) {
           unsigned int event_id, delay;
           size_t num_rows, num_columns, num_coords;
           size_t xs[MAX_RESERVATION_SIZE], ys[MAX_RESERVATION_SIZE];
           int toExit = 0;
+          // thread_struct *new_thread = malloc(sizeof(thread_struct));
+          pthread_t thread;
 
-          switch (get_next(jobs_fd)) {
-          case CMD_CREATE:
-            if (parse_create(jobs_fd, &event_id, &num_rows, &num_columns) != 0) {
-              fprintf(stderr, "Invalid command. See HELP for usage\n");
-              continue;
+          void *thread_func() {
+              switch (get_next(jobs_fd)) {
+              case CMD_CREATE:
+                if (parse_create(jobs_fd, &event_id, &num_rows, &num_columns) != 0) {
+                  fprintf(stderr, "Invalid command. See HELP for usage\n");
+                  return NULL;
+                }
+
+                if (ems_create(event_id, num_rows, num_columns)) {
+                  fprintf(stderr, "Failed to create event\n");
+                }
+
+                break;
+
+              case CMD_RESERVE:
+                num_coords =
+                    parse_reserve(jobs_fd, MAX_RESERVATION_SIZE, &event_id, xs, ys);
+
+                if (num_coords == 0) {
+                  fprintf(stderr, "Invalid command. See HELP for usage\n");
+                  return NULL;
+                }
+
+                if (ems_reserve(event_id, num_coords, xs, ys)) {
+                  fprintf(stderr, "Failed to reserve seats\n");
+                }
+
+                break;
+
+              case CMD_SHOW:
+                if (parse_show(jobs_fd, &event_id) != 0) {
+                  fprintf(stderr, "Invalid command. See HELP for usage\n");
+                  return NULL;
+                }
+
+                if (ems_show(event_id, out_fd)) {
+                  fprintf(stderr, "Failed to show event\n");
+                }
+
+                break;
+
+              case CMD_LIST_EVENTS:
+                if (ems_list_events(out_fd)) {
+                  fprintf(stderr, "Failed to list events\n");
+                }
+
+                break;
+
+              case CMD_WAIT:
+                if (parse_wait(jobs_fd, &delay, NULL) ==
+                    -1) { // thread_id is not implemented
+                  fprintf(stderr, "Invalid command. See HELP for usage\n");
+                  return NULL;
+                }
+
+                if (delay > 0) {
+                  printf("Waiting...\n");
+                  ems_wait(delay);
+                }
+                //if (delay > 0) {  TODO: perguntar ao professor o que fazer no wait
+                //  char *buffer = malloc(sizeof("Waiting...\n"));
+                //  strcpy(buffer, "Waiting...\n");
+                //  write_to_out(out_fd, buffer);
+                //  free(buffer);
+                //  ems_wait(delay);
+                //}
+
+                break;
+
+              case CMD_INVALID:
+                fprintf(stderr, "Invalid command. See HELP for usage\n");
+                break;
+
+              case CMD_HELP:
+                printf(
+                  "Available commands:\n"
+                  "  CREATE <event_id> <num_rows> <num_columns>\n"
+                  "  RESERVE <event_id> [(<x1>,<y1>) (<x2>,<y2>) ...]\n"
+                  "  SHOW <event_id>\n"
+                  "  LIST\n"
+                  "  WAIT <delay_ms> [thread_id]\n"  // thread_id is not implemented
+                  "  BARRIER\n"                      // Not implemented
+                  "  HELP\n");
+                //char *buffer = malloc(BUFFER_SIZE);  TODO: perguntar ao professor o que fazer no help
+                //strcpy(buffer, "Available commands:\n"
+                //      "  CREATE <event_id> <num_rows> <num_columns>\n"
+                //      "  RESERVE <event_id> [(<x1>,<y1>) (<x2>,<y2>) ...]\n"
+                //      "  SHOW <event_id>\n"
+                //      "  LIST\n"
+                //      "  WAIT <delay_ms> [thread_id]\n" // thread_id is not implemented
+                //      "  BARRIER\n"                     // Not implemented
+                //      "  HELP\n");
+                //
+                //write_to_out(out_fd, buffer);
+                //free(buffer);
+
+                break;
+
+              case CMD_BARRIER: // Not implemented
+              case CMD_EMPTY:
+                break;
+
+              case EOC:
+                toExit = 1;
+
+                break;
+
+              if (toExit) {
+                return NULL;
+              }
             }
+            return NULL;
+          }
+          // new_thread->thread_id = id++;
 
-            if (ems_create(event_id, num_rows, num_columns)) {
-              fprintf(stderr, "Failed to create event\n");
-            }
-
-            break;
-
-          case CMD_RESERVE:
-            num_coords =
-                parse_reserve(jobs_fd, MAX_RESERVATION_SIZE, &event_id, xs, ys);
-
-            if (num_coords == 0) {
-              fprintf(stderr, "Invalid command. See HELP for usage\n");
-              continue;
-            }
-
-            if (ems_reserve(event_id, num_coords, xs, ys)) {
-              fprintf(stderr, "Failed to reserve seats\n");
-            }
-
-            break;
-
-          case CMD_SHOW:
-            if (parse_show(jobs_fd, &event_id) != 0) {
-              fprintf(stderr, "Invalid command. See HELP for usage\n");
-              continue;
-            }
-
-            if (ems_show(event_id, out_fd)) {
-              fprintf(stderr, "Failed to show event\n");
-            }
-
-            break;
-
-          case CMD_LIST_EVENTS:
-            if (ems_list_events(out_fd)) {
-              fprintf(stderr, "Failed to list events\n");
-            }
-
-            break;
-
-          case CMD_WAIT:
-            if (parse_wait(jobs_fd, &delay, NULL) ==
-                -1) { // thread_id is not implemented
-              fprintf(stderr, "Invalid command. See HELP for usage\n");
-              continue;
-            }
-
-            if (delay > 0) {
-              printf("Waiting...\n");
-              ems_wait(delay);
-            }
-            //if (delay > 0) {  TODO: perguntar ao professor o que fazer no wait
-            //  char *buffer = malloc(sizeof("Waiting...\n"));
-            //  strcpy(buffer, "Waiting...\n");
-            //  write_to_out(out_fd, buffer);
-            //  free(buffer);
-            //  ems_wait(delay);
-            //}
-
-            break;
-
-          case CMD_INVALID:
-            fprintf(stderr, "Invalid command. See HELP for usage\n");
-            break;
-
-          case CMD_HELP:
-            printf(
-              "Available commands:\n"
-              "  CREATE <event_id> <num_rows> <num_columns>\n"
-              "  RESERVE <event_id> [(<x1>,<y1>) (<x2>,<y2>) ...]\n"
-              "  SHOW <event_id>\n"
-              "  LIST\n"
-              "  WAIT <delay_ms> [thread_id]\n"  // thread_id is not implemented
-              "  BARRIER\n"                      // Not implemented
-              "  HELP\n");
-            //char *buffer = malloc(BUFFER_SIZE);  TODO: perguntar ao professor o que fazer no help
-            //strcpy(buffer, "Available commands:\n"
-            //      "  CREATE <event_id> <num_rows> <num_columns>\n"
-            //      "  RESERVE <event_id> [(<x1>,<y1>) (<x2>,<y2>) ...]\n"
-            //      "  SHOW <event_id>\n"
-            //      "  LIST\n"
-            //      "  WAIT <delay_ms> [thread_id]\n" // thread_id is not implemented
-            //      "  BARRIER\n"                     // Not implemented
-            //      "  HELP\n");
-            //
-            //write_to_out(out_fd, buffer);
-            //free(buffer);
-
-            break;
-
-          case CMD_BARRIER: // Not implemented
-          case CMD_EMPTY:
-            break;
-
-          case EOC:
-            toExit = 1;
-
-            break;
+          if (pthread_create(&thread, NULL, thread_func, NULL) != 0) {
+            fprintf(stderr, "Erro ao criar a thread\n");
+            exit(EXIT_FAILURE);
           }
 
-          if (toExit) {
-            break;
+          printf("Created thread %lu\n", thread);
+          if(toExit) break;
+
+          if (pthread_join(thread, NULL) != 0) {
+            fprintf(stderr, "Erro ao esperar pela thread\n");
+            exit(EXIT_FAILURE);
           }
+
+          // free(thread);
+          // add_thread(new_thread);
         }
+
 
       if (close(jobs_fd) == -1) {
         fprintf(stderr, "Failed to close .jobs file\n");
