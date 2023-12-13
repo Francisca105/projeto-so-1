@@ -3,7 +3,9 @@
 #include <time.h>
 #include <string.h>
 #include <unistd.h>
+#include <pthread.h>
 
+#include "operations.h"
 #include "eventlist.h"
 
 #define MAX_UINT 4294967295
@@ -35,6 +37,106 @@ char* realloc_and_copy(char *buffer, size_t size, const char *str) {
 
   strcpy(buffer, str);
   return buffer;
+}
+
+void add_thread(thread_struct *head, pthread_t thread, unsigned int thread_id) {
+  if (head == NULL) {
+    thread_struct *new = malloc(sizeof(thread_struct));
+    new->thread = thread;
+    new->thread_id = thread_id;
+    new->next = NULL;
+    head = new;
+  } else {
+    thread_struct *curr = head;
+
+    while (curr->next != NULL) {
+      curr = curr->next;
+    }
+    
+    thread_struct *new = malloc(sizeof(thread_struct));
+    new->thread = thread;
+    new->thread_id = thread_id;
+    new->next = NULL;
+    curr->next = new;
+  }
+}
+
+void free_threads(thread_struct *head) {
+  if (head == NULL) {
+    return;
+  }
+
+  free_threads(head->next);
+  free(head);
+}
+
+void add_wait_thread(thread_wait *head, unsigned int thread_id,
+                     unsigned int delay) {
+  if (head == NULL) {
+    thread_wait *new = malloc(sizeof(thread_wait));
+    new->thread_id = thread_id;
+    new->delay = delay;
+    new->next = NULL;
+    head = new;
+  } else {
+    thread_wait *find = find_wait_thread(head, thread_id);
+
+    if(find != NULL) {
+      find->delay += delay;
+      return;
+    }
+
+    thread_wait *curr = head;
+
+    while (curr->next != NULL) {
+      curr = curr->next;
+    }
+    
+    thread_wait *new = malloc(sizeof(thread_wait));
+    new->thread_id = thread_id;
+    new->delay = delay;
+    new->next = NULL;
+    curr->next = new;
+  }
+}
+
+thread_wait *find_wait_thread(thread_wait *head, unsigned int thread_id) {
+  if (head == NULL) {
+    return NULL;
+  }
+
+  thread_wait *curr = head;
+
+  while(curr->next != NULL) {
+    if (curr->thread_id == thread_id) {
+      return curr;
+    }
+    curr = curr->next;
+  }
+  return NULL;
+}
+
+void free_wait_thread(thread_wait *head, unsigned int thread_id) {
+  if (head == NULL) {
+    return;
+  }
+
+  if (head->thread_id == thread_id) {
+    thread_wait *next = head->next;
+    free(head);
+    free_wait_thread(next, thread_id);
+  } else {
+    free_wait_thread(head->next, thread_id);
+  }
+}
+
+void free_wait_threads(thread_wait *head) {
+  if (head == NULL) {
+    return;
+  }
+
+  free_wait_threads(head->next);
+  free(head);
 }
 
 /// Calculates a timespec from a delay in milliseconds.

@@ -3,7 +3,7 @@
 # Add missing import
 # command -v ../../ems >/dev/null 2>&1 || { echo >&2 "ems command not found. Aborting."; exit 1; }
 
-../../ems ./ 999999999 #999999999
+../../ems ./ 999999999 999999999
 
 for i in {1..25}; do
   if [[ ($i -ge 1 && $i -le 7) || $i -eq 16 || $i -eq 21 || $i -eq 23 || $i -eq 25 ]]; then
