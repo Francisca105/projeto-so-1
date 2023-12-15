@@ -72,6 +72,7 @@ struct Event *get_event(struct EventList *list, unsigned int event_id, pthread_r
   while (current) {
     struct Event *event = current->event;
     if (event->id == event_id) {
+      pthread_rwlock_unlock(rwlock_events);
       return event;
     }
     current = current->next;

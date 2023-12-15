@@ -61,6 +61,7 @@ void *thread_func(void *args) {
     size_t xs[MAX_RESERVATION_SIZE], ys[MAX_RESERVATION_SIZE];
 
     if (delays[id] > 0) {
+      printf("%d:  Waiting...\n",id); //TODO
       ems_wait(delays[id]);
       delays[id] = 0;
     }
@@ -69,19 +70,20 @@ void *thread_func(void *args) {
     pthread_mutex_lock(rd_jobs_mutex);
     switch (get_next(jobs_fd)) {
       case CMD_CREATE:
+        printf("%d:  Creating...\n", id); //TODO
         if (parse_create(jobs_fd, &event_id, &num_rows, &num_columns) != 0) {
+          pthread_mutex_unlock(rd_jobs_mutex);
           fprintf(stderr, "Invalid command. See HELP for usage\n");
           continue;
         }
         pthread_mutex_unlock(rd_jobs_mutex);
-
         if (ems_create(event_id, num_rows, num_columns, rwlock_events)) {
           fprintf(stderr, "Failed to create event\n");
         }
-
         break;
 
       case CMD_RESERVE:
+        printf("%d:  Reserving...\n",id); //TODO
         num_coords =
             parse_reserve(jobs_fd, MAX_RESERVATION_SIZE, &event_id, xs, ys);
         pthread_mutex_unlock(rd_jobs_mutex);
@@ -100,7 +102,9 @@ void *thread_func(void *args) {
         break;
 
       case CMD_SHOW:
+        printf("%d:  Showing...\n",id); //TODO
         if (parse_show(jobs_fd, &event_id) != 0) {
+          pthread_mutex_unlock(rd_jobs_mutex);
           fprintf(stderr, "Invalid command. See HELP for usage\n");
           continue;
         }
@@ -113,6 +117,7 @@ void *thread_func(void *args) {
         break;
 
       case CMD_LIST_EVENTS:
+        printf("%d:  Listing...\n",id); //TODO
         pthread_mutex_unlock(rd_jobs_mutex);
 
         if (ems_list_events(out_fd, wr_out_mutex)) {
@@ -122,6 +127,7 @@ void *thread_func(void *args) {
         break;
 
       case CMD_WAIT:
+        printf("%d:  Parsing wait...\n",id); //TODO
         int wait = parse_wait(jobs_fd, &delay, &thread_id);
         pthread_mutex_unlock(rd_jobs_mutex);
 
@@ -161,10 +167,11 @@ void *thread_func(void *args) {
         break;
 
       case CMD_BARRIER:
+        printf("%d:  Barrier...\n",id); //TODO
         pthread_mutex_unlock(rd_jobs_mutex);
-
         *ret_value = 1;
         exitFlag = 1;
+
         break;
 
       case CMD_EMPTY:
@@ -172,8 +179,8 @@ void *thread_func(void *args) {
         break;
 
       case EOC:
+        printf("%d:  Reached EOC...\n",id); //TODO
         pthread_mutex_unlock(rd_jobs_mutex);
-
         *ret_value = 0;
         exitFlag = 1;
 

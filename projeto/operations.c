@@ -91,7 +91,7 @@ static struct timespec delay_to_timespec(unsigned int delay_ms) {
 /// @note Will wait to simulate a real system accessing a costly memory
 /// resource.
 /// @param event_id The ID of the event to get.
-/// @param rwlock_events TODO
+/// @param rwlock_events RWLock to be used to access the events list.
 /// @return Pointer to the event if found, NULL otherwise.
 static struct Event *get_event_with_delay(unsigned int event_id, pthread_rwlock_t *rwlock_events) {
   struct timespec delay = delay_to_timespec(state_access_delay_ms);
@@ -204,6 +204,7 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t *xs,
     return 1;
   }
 
+  // TODO: mutex aqui? atomic_smth?
   unsigned int reservation_id = ++event->reservations;
 
   size_t i = 0;
@@ -223,6 +224,7 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t *xs,
       break;
     }
 
+    // TODO: mutex aqui também?
     *get_seat_with_delay(event, seat_index(event, row, col)) = reservation_id;
   }
 
@@ -230,6 +232,7 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t *xs,
   if (i < num_seats) {
     event->reservations--;
     for (size_t j = 0; j < i; j++) {
+      // TODO: e aqui?
       *get_seat_with_delay(event, seat_index(event, xs[j], ys[j])) = 0;
     }
     pthread_rwlock_unlock(rwlock_seats);
