@@ -1,4 +1,5 @@
 #include "eventlist.h"
+#include "operations.h"
 
 #include <stdlib.h>
 #include <pthread.h>
@@ -25,7 +26,7 @@ int append_to_list(struct EventList *list, struct Event *event, pthread_rwlock_t
   new_node->next = NULL;
 
   // Write lock so that no other thread can modify the list concurrently.
-  pthread_rwlock_wrlock(rwlock_events);
+  safe_rwlock_wrlock(rwlock_events);
   if (list->head == NULL) {
     list->head = new_node;
     list->tail = new_node;
@@ -33,7 +34,7 @@ int append_to_list(struct EventList *list, struct Event *event, pthread_rwlock_t
     list->tail->next = new_node;
     list->tail = new_node;
   }
-  pthread_rwlock_unlock(rwlock_events);
+  safe_rwlock_unlock(rwlock_events);
 
   return 0;
 }
@@ -62,22 +63,19 @@ void free_list(struct EventList *list) {
   free(list);
 }
 
-struct Event *get_event(struct EventList *list, unsigned int event_id, pthread_rwlock_t *rwlock_events) {
+struct Event *get_event(struct EventList *list, unsigned int event_id) {
   if (!list)
     return NULL;
 
   // Read lock so that multiple threads can read from the list at the same time.
-  pthread_rwlock_rdlock(rwlock_events);
   struct ListNode *current = list->head;
   while (current) {
     struct Event *event = current->event;
     if (event->id == event_id) {
-      pthread_rwlock_unlock(rwlock_events);
       return event;
     }
     current = current->next;
   }
-  pthread_rwlock_unlock(rwlock_events);
 
   return NULL;
 }

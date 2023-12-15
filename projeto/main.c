@@ -13,186 +13,6 @@
 #include "operations.h"
 #include "parser.h"
 
-struct thread_args {
-  int id;
-  int MAX_THREADS;
-  int jobs_fd;
-  int out_fd;
-  unsigned int *delays;
-  pthread_mutex_t *rd_jobs_mutex;
-  pthread_mutex_t *wr_out_mutex;
-  pthread_rwlock_t *rwlock_events;
-  pthread_rwlock_t *rwlock_seats;
-};
-
-static void *safe_malloc(size_t size) {
-  void *ptr = malloc(size);
-  if (ptr == NULL) {
-    fprintf(stderr, "Failed to allocate memory\n");
-    exit(1);
-  }
-  return ptr;
-}
-
-static void cleanup(int fd) {
-  char ch;
-  while (read(fd, &ch, 1) == 1 && ch != '\n')
-    ;
-}
-
-void *thread_func(void *args) {
-  struct thread_args *thread_args = (struct thread_args*) args;
-  int id = thread_args->id;
-  int jobs_fd = thread_args->jobs_fd;
-  int out_fd = thread_args->out_fd;
-  int MAX_THREADS = thread_args->MAX_THREADS;
-  unsigned int *delays = thread_args->delays;
-  pthread_mutex_t *rd_jobs_mutex = thread_args->rd_jobs_mutex;
-  pthread_mutex_t *wr_out_mutex = thread_args->wr_out_mutex;
-  pthread_rwlock_t *rwlock_events = thread_args->rwlock_events;
-  pthread_rwlock_t *rwlock_seats = thread_args->rwlock_seats;
-
-  int exitFlag = 0;
-  int *ret_value = (int*) safe_malloc(sizeof(int));
-
-  while (1) {
-    unsigned int event_id, delay, thread_id = 0;
-    size_t num_rows, num_columns, num_coords;
-    size_t xs[MAX_RESERVATION_SIZE], ys[MAX_RESERVATION_SIZE];
-
-    if (delays[id] > 0) {
-      printf("%d:  Waiting...\n",id); //TODO
-      ems_wait(delays[id]);
-      delays[id] = 0;
-    }
-
-    // Mutex lock so that only one thread can read from the jobs file at a time.
-    pthread_mutex_lock(rd_jobs_mutex);
-    switch (get_next(jobs_fd)) {
-      case CMD_CREATE:
-        printf("%d:  Creating...\n", id); //TODO
-        if (parse_create(jobs_fd, &event_id, &num_rows, &num_columns) != 0) {
-          pthread_mutex_unlock(rd_jobs_mutex);
-          fprintf(stderr, "Invalid command. See HELP for usage\n");
-          continue;
-        }
-        pthread_mutex_unlock(rd_jobs_mutex);
-        if (ems_create(event_id, num_rows, num_columns, rwlock_events)) {
-          fprintf(stderr, "Failed to create event\n");
-        }
-        break;
-
-      case CMD_RESERVE:
-        printf("%d:  Reserving...\n",id); //TODO
-        num_coords =
-            parse_reserve(jobs_fd, MAX_RESERVATION_SIZE, &event_id, xs, ys);
-        pthread_mutex_unlock(rd_jobs_mutex);
-
-        if (num_coords == 0) {
-          fprintf(stderr, "Invalid command. See HELP for usage\n");
-          continue;
-        }
-
-        sortReserve(xs, ys, num_coords);
-
-        if (ems_reserve(event_id, num_coords, xs, ys, rwlock_events, rwlock_seats)) {
-          fprintf(stderr, "Failed to reserve seats\n");
-        }
-
-        break;
-
-      case CMD_SHOW:
-        printf("%d:  Showing...\n",id); //TODO
-        if (parse_show(jobs_fd, &event_id) != 0) {
-          pthread_mutex_unlock(rd_jobs_mutex);
-          fprintf(stderr, "Invalid command. See HELP for usage\n");
-          continue;
-        }
-        pthread_mutex_unlock(rd_jobs_mutex);
-
-        if (ems_show(event_id, out_fd, wr_out_mutex, rwlock_events, rwlock_seats)) {
-          fprintf(stderr, "Failed to show event\n");
-        }
-
-        break;
-
-      case CMD_LIST_EVENTS:
-        printf("%d:  Listing...\n",id); //TODO
-        pthread_mutex_unlock(rd_jobs_mutex);
-
-        if (ems_list_events(out_fd, wr_out_mutex)) {
-          fprintf(stderr, "Failed to list events\n");
-        }
-
-        break;
-
-      case CMD_WAIT:
-        printf("%d:  Parsing wait...\n",id); //TODO
-        int wait = parse_wait(jobs_fd, &delay, &thread_id);
-        pthread_mutex_unlock(rd_jobs_mutex);
-
-        if (wait == -1) {
-          fprintf(stderr, "Invalid command. See HELP for usage\n");
-          continue;
-        } else if (wait == 0) {
-          for (int i = 0; i < MAX_THREADS; i++) {
-            if (i != id) {
-              delays[i] += delay;
-            }
-          }
-          ems_wait(delay);
-        } else {
-          delays[thread_id-1] += delay;
-        }
-
-        break;
-
-      case CMD_INVALID:
-        pthread_mutex_unlock(rd_jobs_mutex);
-        fprintf(stderr, "Invalid command. See HELP for usage\n");
-        break;
-
-      case CMD_HELP:
-        pthread_mutex_unlock(rd_jobs_mutex);
-        printf(
-          "Available commands:\n"
-          "  CREATE <event_id> <num_rows> <num_columns>\n"
-          "  RESERVE <event_id> [(<x1>,<y1>) (<x2>,<y2>) ...]\n"
-          "  SHOW <event_id>\n"
-          "  LIST\n"
-          "  WAIT <delay_ms> [thread_id]\n"
-          "  BARRIER\n"
-          "  HELP\n");
-
-        break;
-
-      case CMD_BARRIER:
-        printf("%d:  Barrier...\n",id); //TODO
-        pthread_mutex_unlock(rd_jobs_mutex);
-        *ret_value = 1;
-        exitFlag = 1;
-
-        break;
-
-      case CMD_EMPTY:
-        pthread_mutex_unlock(rd_jobs_mutex);
-        break;
-
-      case EOC:
-        printf("%d:  Reached EOC...\n",id); //TODO
-        pthread_mutex_unlock(rd_jobs_mutex);
-        *ret_value = 0;
-        exitFlag = 1;
-
-        break;
-      }
-
-      if (exitFlag == 1) {
-        free(thread_args);
-        return ret_value;
-    }
-  }
-}
 
 int main(int argc, char *argv[]) {
   unsigned int state_access_delay_ms = STATE_ACCESS_DELAY_MS;
@@ -303,13 +123,15 @@ int main(int argc, char *argv[]) {
         }
 
         pthread_mutex_t rd_jobs_mutex;
-        pthread_mutex_init(&rd_jobs_mutex, NULL);
+        safe_mutex_init(&rd_jobs_mutex);
         pthread_mutex_t wr_out_mutex;
-        pthread_mutex_init(&wr_out_mutex, NULL);
+        safe_mutex_init(&wr_out_mutex);
+        pthread_mutex_t reservation;
+        safe_mutex_init(&reservation);
         pthread_rwlock_t rwlock_events;
-        pthread_rwlock_init(&rwlock_events, NULL);
+        safe_rwlock_init(&rwlock_events);
         pthread_rwlock_t rwlock_seats;
-        pthread_rwlock_init(&rwlock_seats, NULL);
+        safe_rwlock_init(&rwlock_seats);
 
         void *ret_value;
         int exitFlag;
@@ -325,6 +147,7 @@ int main(int argc, char *argv[]) {
             args->MAX_THREADS = MAX_THREADS;
             args->delays = delays;
             args->rd_jobs_mutex = &rd_jobs_mutex;
+            args->reservation = &reservation;
             args->wr_out_mutex= &wr_out_mutex;
             args->rwlock_events = &rwlock_events;
             args->rwlock_seats = &rwlock_seats;
@@ -355,25 +178,11 @@ int main(int argc, char *argv[]) {
 
         free(delays);
 
-        if (pthread_mutex_destroy(&rd_jobs_mutex) != 0) {
-          fprintf(stderr, "Failed to destroy rd_jobs_mutex\n");
-          return 1;
-        }
-
-        if (pthread_mutex_destroy(&wr_out_mutex) != 0) {
-          fprintf(stderr, "Failed to destroy wr_out_mutex\n");
-          return 1;
-        }
-
-        if (pthread_rwlock_destroy(&rwlock_events) != 0) {
-          fprintf(stderr, "Failed to destroy rwlock_events\n");
-          return 1;
-        }
-
-        if (pthread_rwlock_destroy(&rwlock_seats) != 0) {
-          fprintf(stderr, "Failed to destroy rwlock_seats\n");
-          return 1;
-        }
+        safe_mutex_destroy(&rd_jobs_mutex);
+        safe_mutex_destroy(&reservation);
+        safe_mutex_destroy(&wr_out_mutex);
+        safe_rwlock_destroy(&rwlock_events);
+        safe_rwlock_destroy(&rwlock_seats);
 
         if (close(jobs_fd) == -1) {
           fprintf(stderr, "Failed to close .jobs file\n");

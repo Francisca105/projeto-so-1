@@ -47,6 +47,6 @@ void free_list(struct EventList *list);
 /// @param event_id Event id.
 /// @param rwlock_events RWLock to be used to access the events list.
 /// @return Pointer to the event if found, NULL otherwise.
-struct Event *get_event(struct EventList *list, unsigned int event_id, pthread_rwlock_t *rwlock_events);
+struct Event *get_event(struct EventList *list, unsigned int event_id);
 
 #endif // EVENT_LIST_H

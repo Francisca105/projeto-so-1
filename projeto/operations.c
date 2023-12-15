@@ -8,13 +8,244 @@
 #include <pthread.h>
 
 #include "eventlist.h"
+#include "parser.h"
+#include "constants.h"
 
 #define MAX_UINT 4294967295
 
 static struct EventList *event_list = NULL;
 static unsigned int state_access_delay_ms = 0;
 
+void *thread_func(void *args) {
+  struct thread_args *thread_args = (struct thread_args*) args;
+  int id = thread_args->id;
+  int jobs_fd = thread_args->jobs_fd;
+  int out_fd = thread_args->out_fd;
+  int MAX_THREADS = thread_args->MAX_THREADS;
+  unsigned int *delays = thread_args->delays;
+  pthread_mutex_t *rd_jobs_mutex = thread_args->rd_jobs_mutex;
+  pthread_mutex_t *wr_out_mutex = thread_args->wr_out_mutex;
+  pthread_mutex_t *reservation = thread_args->reservation;
+  pthread_rwlock_t *rwlock_events = thread_args->rwlock_events;
+  pthread_rwlock_t *rwlock_seats = thread_args->rwlock_seats;
+
+  int exitFlag = 0;
+  int *ret_value = (int*) safe_malloc(sizeof(int));
+
+  while (1) {
+    unsigned int event_id, delay, thread_id = 0;
+    size_t num_rows, num_columns, num_coords;
+    size_t xs[MAX_RESERVATION_SIZE], ys[MAX_RESERVATION_SIZE];
+
+    if (delays[id] > 0) {
+      printf("%d:  Waiting...\n",id); //TODO
+      ems_wait(delays[id]);
+      delays[id] = 0;
+    }
+
+    // Mutex lock so that only one thread can read from the jobs file at a time.
+    safe_mutex_lock(rd_jobs_mutex);
+    switch (get_next(jobs_fd)) {
+      case CMD_CREATE:
+        printf("%d:  Creating...\n", id); //TODO
+        if (parse_create(jobs_fd, &event_id, &num_rows, &num_columns) != 0) {
+          safe_mutex_unlock(rd_jobs_mutex);
+          fprintf(stderr, "Invalid command. See HELP for usage\n");
+          continue;
+        }
+        safe_mutex_unlock(rd_jobs_mutex);
+        if (ems_create(event_id, num_rows, num_columns, rwlock_events)) {
+          fprintf(stderr, "Failed to create event\n");
+        }
+        break;
+
+      case CMD_RESERVE:
+        printf("%d:  Reserving...\n",id); //TODO
+        num_coords =
+            parse_reserve(jobs_fd, MAX_RESERVATION_SIZE, &event_id, xs, ys);
+        safe_mutex_unlock(rd_jobs_mutex);
+
+        if (num_coords == 0) {
+          fprintf(stderr, "Invalid command. See HELP for usage\n");
+          continue;
+        }
+
+        sortReserve(xs, ys, num_coords);
+
+        if (ems_reserve(event_id, num_coords, xs, ys, rwlock_seats, reservation)) {
+          fprintf(stderr, "Failed to reserve seats\n");
+        }
+
+        break;
+
+      case CMD_SHOW:
+        printf("%d:  Showing...\n",id); //TODO
+        if (parse_show(jobs_fd, &event_id) != 0) {
+          safe_mutex_unlock(rd_jobs_mutex);
+          fprintf(stderr, "Invalid command. See HELP for usage\n");
+          continue;
+        }
+        safe_mutex_unlock(rd_jobs_mutex);
+
+        if (ems_show(event_id, out_fd, wr_out_mutex, rwlock_seats)) {
+          fprintf(stderr, "Failed to show event\n");
+        }
+
+        break;
+
+      case CMD_LIST_EVENTS:
+        printf("%d:  Listing...\n",id); //TODO
+        safe_mutex_unlock(rd_jobs_mutex);
+
+        if (ems_list_events(out_fd, wr_out_mutex)) {
+          fprintf(stderr, "Failed to list events\n");
+        }
+
+        break;
+
+      case CMD_WAIT:
+        printf("%d:  Parsing wait...\n",id); //TODO
+        int wait = parse_wait(jobs_fd, &delay, &thread_id);
+        safe_mutex_unlock(rd_jobs_mutex);
+
+        if (wait == -1) {
+          fprintf(stderr, "Invalid command. See HELP for usage\n");
+          continue;
+        } else if (wait == 0) {
+          for (int i = 0; i < MAX_THREADS; i++) {
+            if (i != id) {
+              delays[i] += delay;
+            }
+          }
+          ems_wait(delay);
+        } else {
+          delays[thread_id-1] += delay;
+        }
+
+        break;
+
+      case CMD_INVALID:
+        safe_mutex_unlock(rd_jobs_mutex);
+        fprintf(stderr, "Invalid command. See HELP for usage\n");
+        break;
+
+      case CMD_HELP:
+        safe_mutex_unlock(rd_jobs_mutex);
+        printf(
+          "Available commands:\n"
+          "  CREATE <event_id> <num_rows> <num_columns>\n"
+          "  RESERVE <event_id> [(<x1>,<y1>) (<x2>,<y2>) ...]\n"
+          "  SHOW <event_id>\n"
+          "  LIST\n"
+          "  WAIT <delay_ms> [thread_id]\n"
+          "  BARRIER\n"
+          "  HELP\n");
+
+        break;
+
+      case CMD_BARRIER:
+        printf("%d:  Barrier...\n",id); //TODO
+        safe_mutex_unlock(rd_jobs_mutex);
+        *ret_value = 1;
+        exitFlag = 1;
+
+        break;
+
+      case CMD_EMPTY:
+        safe_mutex_unlock(rd_jobs_mutex);
+        break;
+
+      case EOC:
+        printf("%d:  Reached EOC...\n",id); //TODO
+        safe_mutex_unlock(rd_jobs_mutex);
+        *ret_value = 0;
+        exitFlag = 1;
+
+        break;
+      }
+
+      if (exitFlag == 1) {
+        free(thread_args);
+        return ret_value;
+    }
+  }
+}
+
+
 /* Auxiliary functions */
+
+void *safe_malloc(size_t size) {
+  void *ptr = malloc(size);
+  if (ptr == NULL) {
+    fprintf(stderr, "Failed to allocate memory\n");
+    exit(1);
+  }
+  return ptr;
+}
+
+void safe_mutex_init(pthread_mutex_t *mutex) {
+    if (pthread_mutex_init(mutex, NULL) != 0) {
+        perror("Failed to init mutex");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void safe_mutex_lock(pthread_mutex_t *mutex) {
+    if (pthread_mutex_lock(mutex) != 0) {
+        perror("Failed to lock mutex");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void safe_mutex_unlock(pthread_mutex_t *mutex) {
+    if (pthread_mutex_unlock(mutex) != 0) {
+        perror("Failed to unlock mutex");
+        exit(EXIT_FAILURE);
+    }
+}
+
+
+void safe_mutex_destroy(pthread_mutex_t *mutex) {
+    if (pthread_mutex_destroy(mutex) != 0) {
+        perror("Failed to destroy mutex");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void safe_rwlock_wrlock(pthread_rwlock_t *rwl) {
+    if (pthread_rwlock_wrlock(rwl) != 0) {
+        perror("Failed to lock RWlock");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void safe_rwlock_rdlock(pthread_rwlock_t *rwl) {
+    if (pthread_rwlock_rdlock(rwl) != 0) {
+        perror("Failed to lock RWlock");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void safe_rwlock_unlock(pthread_rwlock_t *rwl) {
+    if (pthread_rwlock_unlock(rwl) != 0) {
+        perror("Failed to unlock RWlock");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void safe_rwlock_init(pthread_rwlock_t *rwl) {
+    if (pthread_rwlock_init(rwl, NULL) != 0) {
+        perror("Failed to init RWlock");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void safe_rwlock_destroy(pthread_rwlock_t *rwl) {
+    if (pthread_rwlock_destroy(rwl) != 0) {
+        perror("Failed to destroy RWlock");
+        exit(EXIT_FAILURE);
+    }
+}
 
 int write_to_out(int out_fd, char *buffer) {
   ssize_t numWritten = 0;
@@ -91,13 +322,12 @@ static struct timespec delay_to_timespec(unsigned int delay_ms) {
 /// @note Will wait to simulate a real system accessing a costly memory
 /// resource.
 /// @param event_id The ID of the event to get.
-/// @param rwlock_events RWLock to be used to access the events list.
 /// @return Pointer to the event if found, NULL otherwise.
-static struct Event *get_event_with_delay(unsigned int event_id, pthread_rwlock_t *rwlock_events) {
+static struct Event *get_event_with_delay(unsigned int event_id) {
   struct timespec delay = delay_to_timespec(state_access_delay_ms);
   nanosleep(&delay, NULL); // Should not be removed
 
-  return get_event(event_list, event_id, rwlock_events);
+  return get_event(event_list, event_id);
 }
 
 /// Gets the seat with the given index from the state.
@@ -152,7 +382,7 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols,
     return 1;
   }
 
-  if (get_event_with_delay(event_id, rwlock_events) != NULL) {
+  if (get_event_with_delay(event_id) != NULL) {
     fprintf(stderr, "Event already exists\n");
     return 1;
   }
@@ -191,25 +421,27 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols,
 }
 
 int ems_reserve(unsigned int event_id, size_t num_seats, size_t *xs,
-                size_t *ys, pthread_rwlock_t *rwlock_events, pthread_rwlock_t *rwlock_seats) {
+                size_t *ys, pthread_rwlock_t *rwlock_seats,
+                pthread_mutex_t *reservation) {
   if (event_list == NULL) {
     fprintf(stderr, "EMS state must be initialized\n");
     return 1;
   }
 
-  struct Event *event = get_event_with_delay(event_id, rwlock_events);
+  struct Event *event = get_event_with_delay(event_id);
 
   if (event == NULL) {
     fprintf(stderr, "Event not found\n");
     return 1;
   }
 
-  // TODO: mutex aqui? atomic_smth?
+  safe_mutex_lock(reservation);
   unsigned int reservation_id = ++event->reservations;
+  safe_mutex_unlock(reservation);
 
   size_t i = 0;
   // Read lock so that multiple threads can try to reserve seats at the same time.
-  pthread_rwlock_rdlock(rwlock_seats);
+  safe_rwlock_rdlock(rwlock_seats);
   for (; i < num_seats; i++) {
     size_t row = xs[i];
     size_t col = ys[i];
@@ -224,33 +456,35 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t *xs,
       break;
     }
 
-    // TODO: mutex aqui também?
     *get_seat_with_delay(event, seat_index(event, row, col)) = reservation_id;
   }
 
   // If the reservation was not successful, free the seats that were reserved.
   if (i < num_seats) {
+    safe_mutex_lock(reservation);
     event->reservations--;
+    safe_mutex_unlock(reservation);
+    
     for (size_t j = 0; j < i; j++) {
       // TODO: e aqui?
       *get_seat_with_delay(event, seat_index(event, xs[j], ys[j])) = 0;
     }
-    pthread_rwlock_unlock(rwlock_seats);
+    safe_rwlock_unlock(rwlock_seats);
     return 1;
   }
-  pthread_rwlock_unlock(rwlock_seats);
+  safe_rwlock_unlock(rwlock_seats);
 
   return 0;
 }
 
 int ems_show(unsigned int event_id, int out_fd, pthread_mutex_t *wr_out_mutex,
-             pthread_rwlock_t *rwlock_events, pthread_rwlock_t *rwlock_seats) {
+             pthread_rwlock_t *rwlock_seats) {
   if (event_list == NULL) {
     fprintf(stderr, "EMS state must be initialized\n");
     return 1;
   }
 
-  struct Event *event = get_event_with_delay(event_id, rwlock_events);
+  struct Event *event = get_event_with_delay(event_id);
 
   if (event == NULL) {
     fprintf(stderr, "Event not found\n");
@@ -268,7 +502,7 @@ int ems_show(unsigned int event_id, int out_fd, pthread_mutex_t *wr_out_mutex,
   // Write lock so that no other thread can modify the event while it is being read.
   // Before writing to the output file, the output is copied to a buffer so that the
   // output file does not have to be locked for the entire duration of the function.
-  pthread_rwlock_wrlock(rwlock_seats);
+  safe_rwlock_wrlock(rwlock_seats); 
   for (size_t i = 1; i <= event->rows; i++) {
     for (size_t j = 1; j <= event->cols; j++) {
       unsigned int *seat = get_seat_with_delay(event, seat_index(event, i, j));
@@ -283,16 +517,16 @@ int ems_show(unsigned int event_id, int out_fd, pthread_mutex_t *wr_out_mutex,
     }
     strcat(buffer, "\n");
   }
-  pthread_rwlock_unlock(rwlock_seats);
+  safe_rwlock_unlock(rwlock_seats);
 
   // Mutex lock so that no other thread can write to the output file while it is being written to.
-  pthread_mutex_lock(wr_out_mutex);
+  safe_mutex_lock(wr_out_mutex);
   if (write_to_out(out_fd, buffer) != 0) {
-    pthread_mutex_unlock(wr_out_mutex);
+    safe_mutex_unlock(wr_out_mutex);
     free(buffer);
     return 1;
   };
-  pthread_mutex_unlock(wr_out_mutex);
+  safe_mutex_unlock(wr_out_mutex);
 
   free(buffer);
 
@@ -306,17 +540,17 @@ int ems_list_events(int out_fd, pthread_mutex_t *wr_out_mutex) {
   }
 
   // Mutex lock so that no other thread can write to the output file while it is being written to.
-  pthread_mutex_lock(wr_out_mutex);
+  safe_mutex_lock(wr_out_mutex);
   if (event_list->head == NULL) {
     if (write_to_out(out_fd, "No events\n") != 0) {
-      pthread_mutex_unlock(wr_out_mutex);
+      safe_mutex_unlock(wr_out_mutex);
       return 1;
     }
 
-    pthread_mutex_unlock(wr_out_mutex);
+    safe_mutex_unlock(wr_out_mutex);
     return 0;
   }
-  pthread_mutex_unlock(wr_out_mutex);
+  safe_mutex_unlock(wr_out_mutex);
 
   char *buffer = (char*) malloc(1);
   if (buffer == NULL) {
@@ -327,18 +561,18 @@ int ems_list_events(int out_fd, pthread_mutex_t *wr_out_mutex) {
   // Write lock so that no other thread can write to the output file while it is being written to.
   // In this case, it is not efficient to copy the output to a buffer before writing to the output 
   // file because the number of events is not known beforehand.
-  pthread_mutex_lock(wr_out_mutex);
+  safe_mutex_lock(wr_out_mutex);
   struct ListNode *current = event_list->head;
   while (current != NULL) {
     buffer = realloc_and_copy(buffer, sizeof("Event: "), "Event: ");
     if (buffer == NULL) {
-      pthread_mutex_unlock(wr_out_mutex);
+      safe_mutex_unlock(wr_out_mutex);
       free(buffer);
       return 1;
     }
     
     if (write_to_out(out_fd, buffer) != 0) {
-      pthread_mutex_unlock(wr_out_mutex);
+      safe_mutex_unlock(wr_out_mutex);
       free(buffer);
       return 1;
     }
@@ -347,20 +581,20 @@ int ems_list_events(int out_fd, pthread_mutex_t *wr_out_mutex) {
     sprintf(event_id_as_char, "%u\n", current->event->id);
     buffer = realloc_and_copy(buffer, strlen(event_id_as_char) + 1, event_id_as_char);
     if (buffer == NULL) {
-      pthread_mutex_unlock(wr_out_mutex);
+      safe_mutex_unlock(wr_out_mutex);
       free(buffer);
       return 1;
     }
 
     if (write_to_out(out_fd, buffer) != 0) {
-      pthread_mutex_unlock(wr_out_mutex);
+      safe_mutex_unlock(wr_out_mutex);
       free(buffer);
       return 1;
     }
 
     current = current->next;
   }
-  pthread_mutex_unlock(wr_out_mutex);
+  safe_mutex_unlock(wr_out_mutex);
 
   free(buffer);
 

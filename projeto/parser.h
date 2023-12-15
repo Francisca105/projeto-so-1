@@ -56,4 +56,9 @@ int parse_show(int fd, unsigned int *event_id);
 /// error.
 int parse_wait(int fd, unsigned int *delay, unsigned int *thread_id);
 
+
+/// Cleans
+/// @param fd 
+void cleanup(int fd);
+
 #endif // EMS_PARSER_H
