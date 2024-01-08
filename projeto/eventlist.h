@@ -13,6 +13,9 @@ struct Event {
 
   unsigned int
       *data; /// Array of size rows * cols with the reservations for each seat.
+  
+  pthread_rwlock_t 
+      *locks; /// Array of size rows * cols with the locks for each seat.
 };
 
 struct ListNode {

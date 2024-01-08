@@ -14,7 +14,6 @@ struct thread_args {
   pthread_mutex_t *wr_out_mutex;
   pthread_mutex_t *reservation;
   pthread_rwlock_t *rwlock_events;
-  pthread_rwlock_t *rwlock_seats;
 };
 
 /// Creates a malloc with error checking.
@@ -27,6 +26,10 @@ void *safe_malloc(size_t size);
 /// @return 1 if the thread finds and BARRIER or an EOF, 0 otherwise.
 void *thread_func(void *args);
 
+/// Creates a safe mutex.
+/// @param mutex 
+void safe_mutex_init(pthread_mutex_t *mutex);
+
 /// Safe mutex lock.
 /// @param mutex 
 void safe_mutex_lock(pthread_mutex_t *mutex);
@@ -35,13 +38,13 @@ void safe_mutex_lock(pthread_mutex_t *mutex);
 /// @param mutex
 void safe_mutex_unlock(pthread_mutex_t *mutex);
 
-/// Creates a safe mutex.
-/// @param mutex 
-void safe_mutex_init(pthread_mutex_t *mutex);
-
 /// Destroys safely a mutex.
 /// @param mutex 
 void safe_mutex_destroy(pthread_mutex_t *mutex);
+
+/// Creates a safe rwlock.
+/// @param rwl
+void safe_rwlock_init(pthread_rwlock_t *rwl);
 
 /// Safe rwlock wrlock.
 /// @param rwl 
@@ -54,10 +57,6 @@ void safe_rwlock_rdlock(pthread_rwlock_t *rwl);
 /// Safe rwlock unlock.
 /// @param rwl
 void safe_rwlock_unlock(pthread_rwlock_t *rwl);
-
-/// Creates a safe rwlock.
-/// @param rwl
-void safe_rwlock_init(pthread_rwlock_t *rwl);
 
 /// Destroies safely an rwlock.
 /// @param rwl 
@@ -110,20 +109,16 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols,
 /// @param num_seats Number of seats to reserve.
 /// @param xs Array of rows of the seats to reserve.
 /// @param ys Array of columns of the seats to reserve.
-/// @param rwlock_events RWLock to be used to access the events list.
-/// @param rwlock_seats RWLock to be used to access an event's seats.
+/// @param reservation Mutex to be used to access the reservation variable.
 /// @return 0 if the reservation was created successfully, 1 otherwise.
 int ems_reserve(unsigned int event_id, size_t num_seats, size_t *xs, size_t *ys,
-                pthread_rwlock_t *rwlock_seats, pthread_mutex_t *reservation);
+                pthread_mutex_t *reservation);
 
 /// Prints the given event.
 /// @param event_id Id of the event to print.
 /// @param wr_out_mutex Mutex to be used to write to the output file.
-/// @param rwlock_events RWLock to be used to access the events list.
-/// @param rwlock_seats RWLock to be used to access an event's seats.
 /// @return 0 if the event was printed successfully, 1 otherwise.
-int ems_show(unsigned int event_id, int out_fd, pthread_mutex_t *wr_out_mutex,
-             pthread_rwlock_t *rwlock_seats);
+int ems_show(unsigned int event_id, int out_fd, pthread_mutex_t *wr_out_mutex);
 
 /// Prints all the events.
 /// @param wr_out_mutex Mutex to be used to write to the output file.

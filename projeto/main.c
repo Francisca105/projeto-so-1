@@ -130,8 +130,6 @@ int main(int argc, char *argv[]) {
         safe_mutex_init(&reservation);
         pthread_rwlock_t rwlock_events;
         safe_rwlock_init(&rwlock_events);
-        pthread_rwlock_t rwlock_seats;
-        safe_rwlock_init(&rwlock_seats);
 
         void *ret_value;
         int exitFlag;
@@ -150,7 +148,6 @@ int main(int argc, char *argv[]) {
             args->reservation = &reservation;
             args->wr_out_mutex= &wr_out_mutex;
             args->rwlock_events = &rwlock_events;
-            args->rwlock_seats = &rwlock_seats;
 
             if (pthread_create(&threads[i], NULL, thread_func, args) != 0) {
               fprintf(stderr, "Failed to create thread\n");
@@ -182,7 +179,6 @@ int main(int argc, char *argv[]) {
         safe_mutex_destroy(&reservation);
         safe_mutex_destroy(&wr_out_mutex);
         safe_rwlock_destroy(&rwlock_events);
-        safe_rwlock_destroy(&rwlock_seats);
 
         if (close(jobs_fd) == -1) {
           fprintf(stderr, "Failed to close .jobs file\n");

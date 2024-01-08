@@ -4,8 +4,8 @@ CC = gcc
 CFLAGS = -g -std=c17 -D_POSIX_C_SOURCE=200809L \
 		 -Wall -Werror -Wextra \
 		 -Wcast-align -Wconversion -Wfloat-equal -Wformat=2 -Wnull-dereference -Wshadow -Wsign-conversion -Wswitch-enum -Wundef -Wunreachable-code -Wunused \
-		 #-fsanitize=address -fsanitize=undefined
-		 -fsanitize=pthread
+      	 -fsanitize=address -fsanitize=undefined -pthread
+# A flag -fsanitize=address estava a apresentar problemas quando corremos o projeto no sigma mas localmente funcionava bem
 
 ifneq ($(shell uname -s),Darwin) # if not MacOS
 	CFLAGS += -fmax-errors=5
