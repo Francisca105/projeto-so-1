@@ -15,6 +15,7 @@
 
 static struct EventList *event_list = NULL;
 static unsigned int state_access_delay_ms = 0;
+int barrier = 0;
 
 /* Main thread function */
 void *thread_func(void *args) {
@@ -41,6 +42,8 @@ void *thread_func(void *args) {
       ems_wait(delays[id]);
       delays[id] = 0;
     }
+
+    barrier++;
 
     // Mutex lock so that only one thread can read from the jobs file at a time.
     safe_mutex_lock(rd_jobs_mutex);
@@ -138,6 +141,8 @@ void *thread_func(void *args) {
         safe_mutex_unlock(rd_jobs_mutex);
         *ret_value = 1;
         exitFlag = 1;
+        fprintf(stderr, "Reached barrier - Completed %d commands.\n", barrier);
+        barrier = 0;
 
         break;
 
