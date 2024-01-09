@@ -16,6 +16,7 @@
 
 int main(int argc, char *argv[]) {
   unsigned int state_access_delay_ms = STATE_ACCESS_DELAY_MS;
+  int needed_proc = 0;
 
   if (argc < 4) {
     fprintf(stderr, "Usage: %s <dir_path> <MAX_PROC> <MAX_THREADS> [delay]\n", argv[0]);
@@ -59,6 +60,8 @@ int main(int argc, char *argv[]) {
 
     if (dp->d_type == DT_REG && strlen(dp->d_name) > 4 && !strcmp(dp->d_name + strlen(dp->d_name) - 5, ".jobs")) {
       int status;
+
+      needed_proc++;
 
       if (num_active_proc == MAX_PROC) {
         wait(&status);
@@ -214,6 +217,6 @@ int main(int argc, char *argv[]) {
       printf("Child process exited due to signal %d\n", WTERMSIG(status));
     }
   }
-
+  printf("Needed %d processes\n", needed_proc);
   return ems_terminate();
 }
